@@ -438,6 +438,10 @@ static void open_dumpfile(vpiHandle callh)
       if (dump_path == 0) dump_path = strdup("dump.fst");
 
       dump_file = fstWriterCreate(dump_path, 1);
+      if (dump_file && getenv("FST_PARALLEL") && atoi(getenv("FST_PARALLEL"))) {
+	    fstWriterSetParallelMode(dump_file, 1);
+	    vpi_printf("FST info: parallel writer enabled.\n");
+      }
 
       if (dump_file == 0) {
 	    vpi_printf("FST Error: %s:%d: ", vpi_get_str(vpiFile, callh),

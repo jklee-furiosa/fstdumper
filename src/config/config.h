@@ -40,7 +40,9 @@
 # undef HAVE_ALLOCA_H
 # undef HAVE_FSEEKO
 /* And this is needed by the fst files (copied from GTKWave). */
-# undef HAVE_LIBPTHREAD
+# ifndef FST_WITH_PTHREAD
+#  undef HAVE_LIBPTHREAD
+# endif
 # undef HAVE_REALPATH
 
 #endif /* IVL_config_H */
