@@ -33,6 +33,25 @@
 # include  <time.h>
 # include  <zlib.h>
 
+/* IEEE 1800 object types and properties missing from the bundled sv_vpi_user.h. */
+#ifndef vpiEnumVar
+# define vpiEnumVar   617
+#endif
+#ifndef vpiStructVar
+# define vpiStructVar 618
+#endif
+#ifndef vpiUnionVar
+# define vpiUnionVar  619
+#endif
+#ifndef vpiEnumNet
+# define vpiEnumNet   680
+#endif
+#ifndef vpiStructNet
+# define vpiStructNet 683
+#endif
+#ifndef vpiPacked
+# define vpiPacked    630
+#endif
 # include  "ivl_alloc.h"
 
 static char *dump_path = NULL;
@@ -573,6 +592,47 @@ static PLI_INT32 sys_dumplimit_calltf(ICARUS_VPI_CONST PLI_BYTE8 *name)
       return 0;
 }
 
+/*
+ * Objects scan_item cannot dump, counted per VPI type and reported once per
+ * dump call instead of one line each. FST_VERBOSE=1 also names every object.
+ */
+static struct { PLI_INT32 type; char *name; unsigned count; } unsupported[32];
+
+static void note_unsupported(vpiHandle item)
+{
+      PLI_INT32 type = vpi_get(vpiType, item);
+      unsigned idx;
+
+      if (getenv("FST_VERBOSE"))
+	    vpi_printf("FST warning: $dumpvars: %s (%s) not dumped.\n",
+	               vpi_get_str(vpiFullName, item), vpi_get_str(vpiType, item));
+      for (idx = 0; idx < sizeof(unsupported)/sizeof(unsupported[0]); idx += 1) {
+	    if (!unsupported[idx].name) {
+		  unsupported[idx].type = type;
+		  unsupported[idx].name = strdup(vpi_get_str(vpiType, item));
+	    }
+	    if (unsupported[idx].type == type) {
+		  unsupported[idx].count += 1;
+		  return;
+	    }
+      }
+}
+
+static void report_unsupported(const char *name)
+{
+      unsigned idx;
+
+      for (idx = 0; idx < sizeof(unsupported)/sizeof(unsupported[0]); idx += 1) {
+	    if (!unsupported[idx].name) break;
+	    vpi_printf("FST warning: %s: %u object(s) of unsupported type %s "
+	               "not dumped (FST_VERBOSE=1 lists them).\n",
+	               name, unsupported[idx].count, unsupported[idx].name);
+	    free(unsupported[idx].name);
+	    unsupported[idx].name = NULL;
+	    unsupported[idx].count = 0;
+      }
+}
+
 static void scan_item(unsigned depth, vpiHandle item, int skip)
 {
       debug_print("scan_item %d %s %d\n", depth, vpi_get_str(vpiFullName, item), skip);
@@ -611,6 +671,18 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 	  case vpiReg:        type = FST_VT_VCD_REG; break;
 	    /* Icarus converts a time to a plain register. */
 	  case vpiTimeVar:    type = FST_VT_VCD_TIME; break;
+	  case vpiEnumVar:
+	  case vpiEnumNet:    type = FST_VT_SV_ENUM; break;
+	    /* A packed struct/union is dumped as one vector of all its bits. */
+	  case vpiStructVar:
+	  case vpiStructNet:
+	  case vpiUnionVar:
+	    if (!vpi_get(vpiPacked, item)) {
+		  note_unsupported(item);
+		  return;
+	    }
+	    type = FST_VT_VCD_REG;
+	    break;
 	  case vpiNet:
 	    switch (vpi_get(vpiNetType, item)) {
 		case vpiWand:    type = FST_VT_VCD_WAND; break;
@@ -636,8 +708,7 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 	  case vpiTask:       stype = FST_ST_VCD_TASK; break;
 
 	  default:
-	    vpi_printf("FST warning: $dumpvars: Unsupported argument "
-	               "type (%s).\n", vpi_get_str(vpiType, item));
+	    note_unsupported(item);
 	    return;
       }
 
@@ -684,6 +755,11 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 	  case vpiReg:
 	  case vpiTimeVar:
 	  case vpiNet:
+	  case vpiEnumVar:
+	  case vpiEnumNet:
+	  case vpiStructVar:
+	  case vpiStructNet:
+	  case vpiUnionVar:
 
 	      /* If we are skipping all signal or this is in an automatic
 	       * scope then just return. */
@@ -1058,6 +1134,7 @@ static PLI_INT32 sys_dumpvars_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
       }
 
       for ( ; item; item = vpi_scan(argv)) dump_item(depth, item, callh);
+      report_unsupported(name);
 
       debug_print("sys_dumpvars_calltf %s done\n", name);
 
@@ -1140,6 +1217,7 @@ static PLI_INT32 sys_dumpvars_by_file_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
 	    nentries += 1;
       }
 
+      report_unsupported(name);
       vpi_printf("FST info: %s: %u entries from %s.\n", name, nentries, path);
       gzclose(fp);
       free(path);
