@@ -598,6 +598,14 @@ static PLI_INT32 sys_dumplimit_calltf(ICARUS_VPI_CONST PLI_BYTE8 *name)
  */
 static struct { PLI_INT32 type; char *name; unsigned count; } unsupported[32];
 static unsigned skipped_cells;
+static unsigned long scanned_vars, scanned_scopes;
+static struct timespec scan_start;
+
+static void begin_scan(void)
+{
+      scanned_vars = scanned_scopes = 0;
+      clock_gettime(CLOCK_MONOTONIC, &scan_start);
+}
 
 static void note_unsupported(vpiHandle item)
 {
@@ -631,6 +639,13 @@ static void report_unsupported(const char *name)
 	    free(unsupported[idx].name);
 	    unsupported[idx].name = NULL;
 	    unsupported[idx].count = 0;
+      }
+      {
+	    struct timespec now;
+	    clock_gettime(CLOCK_MONOTONIC, &now);
+	    vpi_printf("FST info: %s: %lu vars in %lu scopes, scanned in %.1f s.\n",
+	               name, scanned_vars, scanned_scopes,
+	               (now.tv_sec - scan_start.tv_sec) + (now.tv_nsec - scan_start.tv_nsec) * 1e-9);
       }
       if (skipped_cells)
 	    vpi_printf("FST info: %s: %u `celldefine instance(s) not dumped "
@@ -825,6 +840,7 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 	    }
 	    # endif
 	    free(escname);
+	    scanned_vars += 1;
 
 	    if (!ident) {
 		  # ifdef ICARUS_VERILOG
@@ -945,6 +961,7 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 			defname = NULL;
 		  }
 		  fstWriterSetScope(dump_file, stype, name, defname);
+		  scanned_scopes += 1;
 		  free(defname);
 
 		  for (i=0; types[i]>0; i++) {
@@ -1147,6 +1164,7 @@ static PLI_INT32 sys_dumpvars_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
 	    item = vpi_scan(argv);
       }
 
+      begin_scan();
       for ( ; item; item = vpi_scan(argv)) dump_item(depth, item, callh);
       report_unsupported(name);
 
@@ -1198,6 +1216,7 @@ static PLI_INT32 sys_dumpvars_by_file_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
 	    free(path);
 	    return 0;
       }
+      begin_scan();
 
       while (gzgets(fp, line, sizeof(line))) {
 	    char *tok, *save = NULL;
