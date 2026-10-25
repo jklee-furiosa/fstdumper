@@ -597,6 +597,7 @@ static PLI_INT32 sys_dumplimit_calltf(ICARUS_VPI_CONST PLI_BYTE8 *name)
  * dump call instead of one line each. FST_VERBOSE=1 also names every object.
  */
 static struct { PLI_INT32 type; char *name; unsigned count; } unsupported[32];
+static unsigned skipped_cells;
 
 static void note_unsupported(vpiHandle item)
 {
@@ -631,6 +632,10 @@ static void report_unsupported(const char *name)
 	    unsupported[idx].name = NULL;
 	    unsupported[idx].count = 0;
       }
+      if (skipped_cells)
+	    vpi_printf("FST info: %s: %u `celldefine instance(s) not dumped "
+	               "(FST_DUMP_CELLS=1 dumps them).\n", name, skipped_cells);
+      skipped_cells = 0;
 }
 
 static void scan_item(unsigned depth, vpiHandle item, int skip)
@@ -872,6 +877,15 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 	  case vpiNamedBegin:
 	  case vpiNamedFork:
 
+	      /* Like FSDB, leave `celldefine instances out: vendor memory
+	       * models are gate-level netlists of millions of scopes. */
+	    if (item_type == vpiModule && vpi_get(vpiCellInstance, item) == 1 &&
+	        !getenv("FST_DUMP_CELLS")) {
+		  if (getenv("FST_VERBOSE"))
+			vpi_printf("FST info: `celldefine instance %s not dumped.\n", fullname);
+		  skipped_cells += 1;
+		  break;
+	    }
 	    if (depth > 0) {
 		  char *instname;
 		  char *defname = NULL;

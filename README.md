@@ -56,9 +56,13 @@ Run-time environment variables:
 |---|---|
 | `FST_PARALLEL=1` | compress and write FST blocks on a separate thread |
 | `FST_VERBOSE=1` | name every object that cannot be dumped (unpacked arrays/structs, strings, ...) |
+| `FST_DUMP_CELLS=1` | also descend into `` `celldefine `` instances |
 
 Enums and packed structs/unions are dumped as vectors. Interfaces, unpacked
 arrays and unpacked structs are not dumped.
+`` `celldefine `` instances are skipped, as FSDB does: vendor memory models are
+gate-level netlists that can add hundreds of millions of scopes, and
+`-debug_access+r` does not expose the signals declared in a cell.
 
 # Example usage
 
