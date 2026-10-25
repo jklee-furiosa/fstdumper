@@ -10,8 +10,12 @@ $(info $(obj))
 
 all: fstdumper.so
 
-CFLAGS = -I $(SRCDIR)/config -fPIC -O2 -DDEBUG
-LDFLAGS = -lz -shared
+# DEBUG=1 traces every VPI step to stdout; it is far too slow for real designs.
+CFLAGS = -I $(SRCDIR)/config -fPIC -O2 -DFST_WITH_PTHREAD -DHAVE_LIBPTHREAD -DFST_WRITER_PARALLEL
+ifeq ($(DEBUG),1)
+CFLAGS += -DDEBUG
+endif
+LDFLAGS = -lz -lpthread -shared
 
 TESTBENCH = $(wildcard testbench/*.sv)
 
@@ -46,8 +50,8 @@ simulation-vsim: fstdumper.so
 	vsim -64 -c div_int_tb -vpicompatcb -pli fstdumper.so -do "run -all"
 
 simulation-vcs: fstdumper.so
-	vcs -sverilog -full64 +vpi -load ./fstdumper.so -debug_acc+pp+f+dmptf $(TESTBENCH)
-	./simv
+	vcs -sverilog -full64 +vpi -load ./fstdumper.so -debug_access+r -exitstatus $(TESTBENCH)
+	./simv -exitstatus
 
 .PHONY: clean all simulation-iverilog simulation-xrun simulation-vsim
 clean:

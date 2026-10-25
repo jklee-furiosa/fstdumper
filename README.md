@@ -30,6 +30,36 @@ Config file `/src/include/config.h`
 #define ICARUS_VERILOG
 ```
 
+# VCS
+
+```
+make fstdumper.so
+vcs -full64 -sverilog +vpi -load /path/to/fstdumper.so -debug_access+r ...
+```
+
+`-debug_access+r` is enough. The dump starts from the usual tasks, or from a
+scope list file:
+
+```
+$fstDumpfile("dump.fst");
+$fstDumpvars(4, top);                 // depth, scope
+$fstDumpvarsByFile("dump_scopes.txt"); // same text format as $fsdbDumpvarsByFile
+```
+
+`$fstDumpvarsByFile` reads `[+option]* [depth] instance_name` per line, `#`
+starts a comment, and depth 0 or no depth means all levels. FSDB `+options`
+are ignored with a warning. Plain and gzip-compressed files are accepted.
+
+Run-time environment variables:
+
+| Variable | Effect |
+|---|---|
+| `FST_PARALLEL=1` | compress and write FST blocks on a separate thread |
+| `FST_VERBOSE=1` | name every object that cannot be dumped (unpacked arrays/structs, strings, ...) |
+
+Enums and packed structs/unions are dumped as vectors. Interfaces, unpacked
+arrays and unpacked structs are not dumped.
+
 # Example usage
 
 ```
