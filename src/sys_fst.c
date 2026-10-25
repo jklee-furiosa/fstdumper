@@ -31,6 +31,8 @@
 # include  <string.h>
 # include  <assert.h>
 # include  <time.h>
+# include  <zlib.h>
+
 # include  "ivl_alloc.h"
 
 static char *dump_path = NULL;
@@ -938,6 +940,81 @@ static int draw_scope(vpiHandle item, vpiHandle callh)
       return depth;
 }
 
+/* Add item (a scope or a signal) and everything below it, down to depth levels. */
+static void dump_item(unsigned depth, vpiHandle item, vpiHandle callh)
+{
+      char *scname;
+      const char *fullname;
+      int add_var = 0;
+      int dep;
+      PLI_INT32 item_type = vpi_get(vpiType, item);
+
+      debug_print("dumping item %s\n", vpi_get_str(vpiName, item));
+
+	/* If this is a signal make sure it has not already
+	 * been included. */
+      switch (item_type) {
+	  case vpiIntegerVar:
+	  case vpiBitVar:
+	  case vpiByteVar:
+	  case vpiShortIntVar:
+	  case vpiIntVar:
+	  case vpiLongIntVar:
+	  case vpiMemoryWord:
+	  case vpiNamedEvent:
+	  case vpiNet:
+	  case vpiParameter:
+	  case vpiRealVar:
+	  case vpiReg:
+	  case vpiTimeVar:
+	      /* Warn if the variables scope (which includes the
+	       * variable) or the variable itself was already
+	       * included. A scope does not automatically include
+	       * memory words so do not check the scope for them.  */
+	    scname = strdup(vpi_get_str(vpiFullName,
+					vpi_handle(vpiScope, item)));
+	    fullname = vpi_get_str(vpiFullName, item);
+	    if (((item_type != vpiMemoryWord) &&
+		 vcd_names_search(&fst_tab, scname)) ||
+		vcd_names_search(&fst_var, fullname)) {
+		  vpi_printf("FST warning: skipping signal %s, "
+			     "it was previously included.\n",
+			     fullname);
+		  free(scname);
+		  return;
+	    } else {
+		  add_var = 1;
+	    }
+	    free(scname);
+      }
+
+	/* A repeated scope would otherwise leave an empty duplicate scope
+	 * entry in the hierarchy. */
+      if (!add_var && vcd_names_search(&fst_tab, vpi_get_str(vpiFullName, item))) {
+	    vpi_printf("FST warning: ignoring signals in "
+	               "previously scanned scope %s.\n",
+	               vpi_get_str(vpiFullName, item));
+	    return;
+      }
+
+      dep = draw_scope(item, callh);
+
+      debug_print("scanning item %s with depth = %d\n", vpi_get_str(vpiName, item), depth);
+      scan_item(depth, item, 0);
+	/* The scope list must be sorted after we scan an item.  */
+      vcd_names_sort(&fst_tab);
+
+      while (dep--) fstWriterSetUpscope(dump_file);
+
+	/* Add this signal to the variable list so we can verify it
+	 * is not included twice. This must be done after it has
+	 * been added */
+      if (add_var) {
+	    vcd_names_add(&fst_var, vpi_get_str(vpiFullName, item));
+	    vcd_names_sort(&fst_var);
+      }
+}
+
 static PLI_INT32 sys_dumpvars_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
 {
       debug_print("sys_dumpvars_calltf %s\n", name);
@@ -980,72 +1057,92 @@ static PLI_INT32 sys_dumpvars_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
 	    item = vpi_scan(argv);
       }
 
-      for ( ; item; item = vpi_scan(argv)) {
-	    char *scname;
-	    const char *fullname;
-	    int add_var = 0;
-	    int dep;
-	    PLI_INT32 item_type = vpi_get(vpiType, item);
-
-            debug_print("dumping item %s\n", vpi_get_str(vpiName, item));
-
-	      /* If this is a signal make sure it has not already
-	       * been included. */
-	    switch (item_type) {
-	        case vpiIntegerVar:
-		case vpiBitVar:
-		case vpiByteVar:
-		case vpiShortIntVar:
-		case vpiIntVar:
-		case vpiLongIntVar:
-	        case vpiMemoryWord:
-	        case vpiNamedEvent:
-	        case vpiNet:
-	        case vpiParameter:
-	        case vpiRealVar:
-	        case vpiReg:
-	        case vpiTimeVar:
-		    /* Warn if the variables scope (which includes the
-		     * variable) or the variable itself was already
-		     * included. A scope does not automatically include
-		     * memory words so do not check the scope for them.  */
-		  scname = strdup(vpi_get_str(vpiFullName,
-		                              vpi_handle(vpiScope, item)));
-		  fullname = vpi_get_str(vpiFullName, item);
-		  if (((item_type != vpiMemoryWord) &&
-		       vcd_names_search(&fst_tab, scname)) ||
-		      vcd_names_search(&fst_var, fullname)) {
-		        vpi_printf("FST warning: skipping signal %s, "
-		                   "it was previously included.\n",
-		                   fullname);
-		        free(scname);
-		        continue;
-		  } else {
-		        add_var = 1;
-		  }
-		  free(scname);
-	    }
-
-	    dep = draw_scope(item, callh);
-
-            debug_print("scanning item %s with depth = %d\n", vpi_get_str(vpiName, item), depth);
-	    scan_item(depth, item, 0);
-	      /* The scope list must be sorted after we scan an item.  */
-	    vcd_names_sort(&fst_tab);
-
-	    while (dep--) fstWriterSetUpscope(dump_file);
-
-	      /* Add this signal to the variable list so we can verify it
-	       * is not included twice. This must be done after it has
-	       * been added */
-	    if (add_var) {
-		  vcd_names_add(&fst_var, vpi_get_str(vpiFullName, item));
-		  vcd_names_sort(&fst_var);
-	    }
-      }
+      for ( ; item; item = vpi_scan(argv)) dump_item(depth, item, callh);
 
       debug_print("sys_dumpvars_calltf %s done\n", name);
 
+      return 0;
+}
+
+/*
+ * $fstDumpvarsByFile("file") reads the $fsdbDumpvarsByFile text format, so one
+ * file can drive both dumpers. Each line is
+ *     [+option]* [depth] instance_name
+ * where "#" starts a comment and a missing or zero depth means all levels.
+ * FSDB "+options" have no FST equivalent and are ignored with a warning.
+ * Plain and gzip-compressed files are both accepted.
+ */
+static PLI_INT32 sys_dumpvars_by_file_calltf(ICARUS_VPI_CONST PLI_BYTE8*name)
+{
+      vpiHandle callh = vpi_handle(vpiSysTfCall, 0);
+      vpiHandle argv = vpi_iterate(vpiArgument, callh);
+      char *path = get_filename(callh, name, vpi_scan(argv));
+      char line[4096];
+      unsigned lineno = 0, nentries = 0;
+      gzFile fp;
+
+      vpi_free_object(argv);
+      if (! path) return 0;
+
+      fp = gzopen(path, "r");
+      if (! fp) {
+	    vpi_printf("FST Error: %s:%d: %s: cannot open \"%s\".\n",
+	               vpi_get_str(vpiFile, callh),
+	               (int)vpi_get(vpiLineNo, callh), name, path);
+	    free(path);
+	    vpi_control(vpiFinish, 1);
+	    return 0;
+      }
+
+      if (dump_file == 0) {
+	    open_dumpfile(callh);
+	    if (dump_file == 0) {
+		  gzclose(fp);
+		  free(path);
+		  return 0;
+	    }
+      }
+      if (install_dumpvars_callback()) {
+	    gzclose(fp);
+	    free(path);
+	    return 0;
+      }
+
+      while (gzgets(fp, line, sizeof(line))) {
+	    char *tok, *save = NULL;
+	    const char *scope = NULL;
+	    unsigned depth = 0;
+	    vpiHandle item;
+
+	    lineno += 1;
+	    if ((tok = strchr(line, '#'))) *tok = 0;
+	    for (tok = strtok_r(line, " \t\r\n", &save); tok;
+	         tok = strtok_r(NULL, " \t\r\n", &save)) {
+		  if (tok[0] == '+') {
+			vpi_printf("FST warning: %s:%u: option %s is not "
+			           "supported, ignored.\n", path, lineno, tok);
+		  } else if (!scope && tok[strspn(tok, "0123456789")] == 0) {
+			depth = (unsigned)strtoul(tok, NULL, 10);
+		  } else {
+			scope = tok;
+			break;
+		  }
+	    }
+	    if (! scope) continue;
+
+	    item = vpi_handle_by_name((PLI_BYTE8*)scope, NULL);
+	    if (! item) {
+		  vpi_printf("FST warning: %s:%u: %s not found, skipped.\n",
+		             path, lineno, scope);
+		  continue;
+	    }
+	    dump_item(depth ? depth : 10000, item, callh);
+	    nentries += 1;
+      }
+
+      vpi_printf("FST info: %s: %u entries from %s.\n", name, nentries, path);
+      gzclose(fp);
+      free(path);
       return 0;
 }
 
@@ -1136,5 +1233,13 @@ void sys_fst_register(void)
       tf_data.compiletf = sys_dumpvars_compiletf;
       tf_data.sizetf    = 0;
       tf_data.user_data = "$fstDumpvars";
+      res = vpi_register_systf(&tf_data);
+
+      tf_data.type      = vpiSysTask;
+      tf_data.tfname    = "$fstDumpvarsByFile";
+      tf_data.calltf    = sys_dumpvars_by_file_calltf;
+      tf_data.compiletf = sys_one_string_arg_compiletf;
+      tf_data.sizetf    = 0;
+      tf_data.user_data = "$fstDumpvarsByFile";
       res = vpi_register_systf(&tf_data);
 }
