@@ -268,10 +268,9 @@ static PLI_INT32 finish_cb(p_cb_data cause)
       
       if (cause->time == NULL) {
 	    // Xcelium doesn't seem to populate cause->time
-	    vpiHandle systfref = vpi_handle(vpiSysTfCall, NULL);
 	    s_vpi_time time;
 	    time.type = vpiSimTime;
-	    vpi_get_time(systfref, &time);
+	    vpi_get_time(NULL, &time);
 
 	    dumpvars_time = timerec_to_time64(&time);
       } else {
@@ -896,6 +895,7 @@ static int draw_scope(vpiHandle item, vpiHandle callh)
       char *defname = NULL;
       PLI_INT32 scope_type, type;
 
+      if (vpi_get(vpiType, item) == vpiModule && vpi_get(vpiTopModule, item)) return 0;
       vpiHandle scope = vpi_handle(vpiScope, item);
       if (!scope) return 0;
 
