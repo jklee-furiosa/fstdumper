@@ -756,7 +756,12 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 
 		  cb.time      = &info->time;
 		  cb.user_data = (char*)info;
-		  cb.value     = NULL;
+		  {
+		    static s_vpi_time  cb_time  = { vpiSimTime, 0, 0, 0.0 };
+		    static s_vpi_value cb_value = { vpiSuppressVal };
+		    cb.time  = &cb_time;
+		    cb.value = &cb_value;
+		  }
 		  cb.obj       = item;
 		  cb.reason    = cbValueChange;
 		  cb.cb_rtn    = variable_cb_1;
@@ -768,6 +773,12 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
                   debug_print("register variable_cb_1\n");
 
 		  info->cb    = vpi_register_cb(&cb);
+		  if (!info->cb) {
+			s_vpi_error_info err;
+			vpi_chk_error(&err);
+			vpi_printf("FST warning: cbValueChange register failed for %s: %s\n",
+			           fullname, err.message ? err.message : "(no message)");
+		  }
 	    }
 
 	    break;
