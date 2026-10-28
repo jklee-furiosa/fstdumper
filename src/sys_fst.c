@@ -67,6 +67,8 @@ struct vcd_info {
       struct vcd_info *dmp_next;
       fstHandle handle;
       int scheduled;
+      PLI_INT32 type;
+      unsigned size;
 };
 
 
@@ -95,21 +97,77 @@ static const char*units_names[] = {
       "fs"
 };
 
+/*
+ * Write the value of a vector as one '0'/'1'/'z'/'x' character per bit,
+ * MSB first. Reading vpiVectorVal and converting here is about twice as
+ * fast as letting the simulator format vpiBinStrVal.
+ */
+static const char *vector_to_bits(const s_vpi_vecval *vec, unsigned size)
+{
+      static char *buf;
+      static unsigned buf_size;
+      static char byte_bits[256][8];
+      unsigned idx, pos = 0, bit = size;
+      int known = 1;
+
+      if (!byte_bits[1][7]) {
+	    for (idx = 0; idx < 256; idx += 1) {
+		  unsigned k;
+		  for (k = 0; k < 8; k += 1)
+			byte_bits[idx][k] = '0' + ((idx >> (7 - k)) & 1);
+	    }
+      }
+      if (size > buf_size) {
+	    buf_size = size;
+	    buf = realloc(buf, buf_size);
+      }
+
+      for (idx = 0; idx < (size + 31) / 32; idx += 1) {
+	    if (vec[idx].bval) {
+		  known = 0;
+		  break;
+	    }
+      }
+
+      if (known) {
+	    while (bit % 8) {
+		  bit -= 1;
+		  buf[pos++] = '0' + ((vec[bit/32].aval >> (bit%32)) & 1);
+	    }
+	    while (bit) {
+		  bit -= 8;
+		  memcpy(buf + pos, byte_bits[(vec[bit/32].aval >> (bit%32)) & 0xff], 8);
+		  pos += 8;
+	    }
+      } else {
+	    while (bit) {
+		  int a, b;
+		  bit -= 1;
+		  a = (vec[bit/32].aval >> (bit%32)) & 1;
+		  b = (vec[bit/32].bval >> (bit%32)) & 1;
+		  buf[pos++] = b ? (a ? 'x' : 'z') : (a ? '1' : '0');
+	    }
+      }
+      return buf;
+}
+
 static void show_this_item(struct vcd_info*info)
 {
       debug_print("show_this_item\n");
 
       s_vpi_value value;
-      PLI_INT32 type = vpi_get(vpiType, info->item);
 
-      if (type == vpiRealVar) {
+      if (info->type == vpiRealVar) {
 	    value.format = vpiRealVal;
 	    vpi_get_value(info->item, &value);
 	    fstWriterEmitValueChange(dump_file, info->handle, &value.value.real);
+      } else if (info->type == vpiNamedEvent) {
+	    fstWriterEmitValueChange(dump_file, info->handle, "1");
       } else {
-	    value.format = vpiBinStrVal;
+	    value.format = vpiVectorVal;
 	    vpi_get_value(info->item, &value);
-	    fstWriterEmitValueChange(dump_file, info->handle, (type != vpiNamedEvent) ? value.value.str : "1");
+	    fstWriterEmitValueChange(dump_file, info->handle,
+	                             vector_to_bits(value.value.vector, info->size));
       }
       
       debug_print("show_this_item done\n");
@@ -855,11 +913,13 @@ static void scan_item(unsigned depth, vpiHandle item, int skip)
 		  info->item  = item;
 		  info->handle = new_ident;
 		  info->scheduled = 0;
+		  info->type = item_type;
+		  info->size = size;
 
 		  cb.time      = &info->time;
 		  cb.user_data = (char*)info;
 		  {
-		    static s_vpi_time  cb_time  = { vpiSimTime, 0, 0, 0.0 };
+		    static s_vpi_time  cb_time  = { vpiSuppressTime, 0, 0, 0.0 };
 		    static s_vpi_value cb_value = { vpiSuppressVal };
 		    cb.time  = &cb_time;
 		    cb.value = &cb_value;
